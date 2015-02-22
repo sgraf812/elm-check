@@ -110,11 +110,6 @@ mergeTestOutputs output1 output2 =
           mergeTestResults x y :: mergeTestOutputs xs ys
 
 
-generateTestCases : Generator (List a) -> Seed -> (List a, Seed)
-generateTestCases listGenerator seed =
-  generate listGenerator seed
-
-
 {-| Create a property given a number of test cases, a name, a condition to test and a generator
 Example :
 
