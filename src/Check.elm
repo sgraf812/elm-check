@@ -41,7 +41,7 @@ module Check
 
 -}
 
-import Random (Generator, list, generate, initialSeed, Seed, customGenerator)
+import Random (Generator, list, generate, initialSeed, Seed, customGenerator, int)
 import List (map, map2, filter, length, head, (::), reverse, foldl)
 import Result (Result(..))
 import Maybe (Maybe(..), withDefault)
@@ -68,7 +68,7 @@ type alias TestResult = Result Error Success
 
 type alias IntermediateProperty a = { unappliedRest : a, revArguments : List String, seed : Seed }
 
-type alias PropertyBuilder a = { name : String, wrappedProperty : Generator (IntermediateProperty a), requestedSamples : Maybe Int }
+type alias PropertyBuilder a = { name : String, wrappedGenerator : Generator (IntermediateProperty a), requestedSamples : Maybe Int }
 
 type alias Property = PropertyBuilder Bool
 
@@ -204,40 +204,73 @@ property6 name predicate generatorA generatorB generatorC generatorD generatorE 
   property name (\(a,b,c,d,e,f) -> predicate a b c d e f) (rZip6 generatorA generatorB generatorC generatorD generatorE generatorF)
 
 
+infixl 1 `describedBy`
+infixl 0 `on`
+infixl 0 `sample`
 
+-- Some code from the examples that has to type check
+axiom : Property
+axiom = "5 equals 5" `describedBy` 5 == 5 
+
+prop_identity : Property
+prop_identity = "Identity" `describedBy` (\x -> x == identity x) `on` int 0 1000
+
+prop_identity_n : Property
+prop_identity_n = "Identity" `describedBy` (\x -> x == identity x) `on` int 0 1000 `sample` 200
+
+{-| Constructs an initial IntermediateProperty, binding some predicate as the 
+unappliedRest and the seed with which generation of the TestResult began.
+-}
 intermediateProperty : a -> Seed -> IntermediateProperty a
-intermediateProperty rest seed =
-  { unappliedRest = rest
+intermediateProperty predicate seed =
+  { unappliedRest = predicate
   , revArguments = []
   , seed = seed
   }
 
+{-| Function for building up a property starting with a name
+and the actual code to check.
+
+    axiom = "5 equals 5" `describedBy` 5 == 5 
+-}
 describedBy : String -> a -> PropertyBuilder a
 describedBy name predicate = 
   { name = name
-  , wrappedProperty = 
+  , wrappedGenerator = 
       customGenerator
         (\seed ->
           (intermediateProperty predicate seed, seed))
   , requestedSamples = Nothing
   }
 
-
+{-| Further applies the wrapped property generator of an IntermediateProperty
+and saves the argument.
+-}
 applyToProperty : IntermediateProperty (a -> b) -> a -> IntermediateProperty b
 applyToProperty p a =
   { p | unappliedRest <- p.unappliedRest a, revArguments <- toString a :: p.revArguments }
 
+{-| Supplies generators for arguments of the property to build up. 
+Using an infix operator like this, we can support functions with an
+arbitrary number of arguments.
+
+    prop_identity = "Identity" `describedBy` (\x -> x == identity x) `on` int 0 1000
+-}
 on : PropertyBuilder (a -> b) -> Generator a -> PropertyBuilder b
 on builder generatorA =
   { builder 
-  | wrappedProperty <- customGenerator
+  | wrappedGenerator <- customGenerator
     (\seed ->
-      let (ip, seed') = generate builder.wrappedProperty seed
+      let (ip, seed') = generate builder.wrappedGenerator seed
           (a, seed'') = generate generatorA seed'
           ip' = applyToProperty ip a
       in (ip', seed''))
   }
 
+{-| Dictate how many samples to generate for the property.
+
+    prop_identity_n = "Identity" `describedBy` (\x -> x == identity x) `on` int 0 1000 `sample` 200
+-}
 sample : PropertyBuilder a -> Int -> PropertyBuilder a
 sample builder n =
   { builder
@@ -260,11 +293,11 @@ propertyResults : Property -> Generator (List TestResult)
 propertyResults p = 
   list -- generate p.requestedSamples from the property, with the result turned into a TestResult
     (withDefault defaultNumberOfSamples p.requestedSamples) -- number of samples to generate
-    (rMap (toResult p.name) p.wrappedProperty) -- converts each generated IntermediateProperty into a TestResult
+    (rMap (toResult p.name) p.wrappedGenerator) -- converts each generated IntermediateProperty into a TestResult
 
 {-| Check a list of properties given a random seed.
-    Checks each property with the same initial seed, so 
-    reversing order of properties is OK for reproducing bugs.
+Checks each property with the same initial seed, so 
+reversing order of properties is OK for reproducing bugs.
 
     check
       [ prop_reverseReverseList
