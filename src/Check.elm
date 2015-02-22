@@ -42,8 +42,9 @@ module Check
 -}
 
 import Random (Generator, list, generate, initialSeed, Seed, customGenerator)
-import List (map, map2, filter, length, head, (::))
+import List (map, map2, filter, length, head, (::), reverse, foldl)
 import Result (Result(..))
+import Maybe (Maybe(..), withDefault)
 import Time (every, second, Time)
 import Signal
 import String (join)
@@ -63,11 +64,15 @@ type alias Success =
   , seed : Seed
   }
 
-type alias TestResult = List (Result Error Success)
+type alias TestResult = Result Error Success
 
-type alias Property = (Seed) -> TestResult
+type alias IntermediateProperty a = { unappliedRest : a, revArguments : List String, seed : Seed }
 
-type alias TestOutput = List TestResult
+type alias PropertyBuilder a = { name : String, wrappedProperty : Generator (IntermediateProperty a), requestedSamples : Maybe Int }
+
+type alias Property = PropertyBuilder Bool
+
+type alias TestOutput = List (List TestResult)
 
 mergeTestResult : Result Error Success -> Result Error Success -> Result Error Success
 mergeTestResult result1 result2 =
@@ -78,7 +83,7 @@ mergeTestResult result1 result2 =
         Err err2 -> Err err2
         Ok ok2 -> Ok ok1
 
-mergeTestResults : TestResult -> TestResult -> TestResult
+mergeTestResults : List TestResult -> List TestResult -> List TestResult
 mergeTestResults results1 results2 =
   let errorResults =
         filter
@@ -109,16 +114,6 @@ generateTestCases : Generator (List a) -> Seed -> (List a, Seed)
 generateTestCases listGenerator seed =
   generate listGenerator seed
 
-test : String -> (a -> Bool) -> (List a, Seed) -> TestResult
-test name predicate (tests, seed) =
-  let testResults = map (\t -> (t, predicate t)) tests
-      toResult (t, value) =
-        case value of
-          True  -> Ok { name = name, value = toString t, seed = seed }
-          False -> Err { name = name, value = toString t, seed = seed }
-  in
-    map toResult testResults
-
 
 {-| Create a property given a number of test cases, a name, a condition to test and a generator
 Example :
@@ -129,13 +124,9 @@ Example :
                 (\number -> -(-number) == number)
                 (float -300 400)
 -}
-propertyN : Int -> String -> (a -> Bool) -> Generator a -> Property
-propertyN numberOfTests name predicate generator =
-  \seed ->
-      let listGenerator = list numberOfTests generator -- listGenerator : Generator (List a)
-          testCases = generateTestCases listGenerator seed -- testCases : (List a, Seed)
-      in
-        test name predicate testCases
+propertyN : Int -> String -> (a -> Bool) -> Generator a -> Property 
+propertyN numberOfTests name predicate generator = 
+  name `describedBy` predicate `on` generator `sample` numberOfTests
 
 
 {-| Analog of `propertyN` for functions of two arguments
@@ -213,7 +204,67 @@ property6 name predicate generatorA generatorB generatorC generatorD generatorE 
   property name (\(a,b,c,d,e,f) -> predicate a b c d e f) (rZip6 generatorA generatorB generatorC generatorD generatorE generatorF)
 
 
+
+intermediateProperty : a -> Seed -> IntermediateProperty a
+intermediateProperty rest seed =
+  { unappliedRest = rest
+  , revArguments = []
+  , seed = seed
+  }
+
+describedBy : String -> a -> PropertyBuilder a
+describedBy name predicate = 
+  { name = name
+  , wrappedProperty = 
+      customGenerator
+        (\seed ->
+          (intermediateProperty predicate seed, seed))
+  , requestedSamples = Nothing
+  }
+
+
+applyToProperty : IntermediateProperty (a -> b) -> a -> IntermediateProperty b
+applyToProperty p a =
+  { p | unappliedRest <- p.unappliedRest a, revArguments <- toString a :: p.revArguments }
+
+on : PropertyBuilder (a -> b) -> Generator a -> PropertyBuilder b
+on builder generatorA =
+  { builder 
+  | wrappedProperty <- customGenerator
+    (\seed ->
+      let (ip, seed') = generate builder.wrappedProperty seed
+          (a, seed'') = generate generatorA seed'
+          ip' = applyToProperty ip a
+      in (ip', seed''))
+  }
+
+sample : PropertyBuilder a -> Int -> PropertyBuilder a
+sample builder n =
+  { builder
+  | requestedSamples <- Just n
+  }
+
+defaultNumberOfSamples : Int
+defaultNumberOfSamples = 100
+
+toResult : String -> IntermediateProperty Bool -> TestResult
+toResult name ip =
+  let rec =
+        { name = name
+        , value = ip.revArguments |> reverse |> toString
+        , seed = ip.seed
+        }
+  in if ip.unappliedRest then Ok rec else Err rec
+
+propertyResults : Property -> Generator (List TestResult)
+propertyResults p = 
+  list -- generate p.requestedSamples from the property, with the result turned into a TestResult
+    (withDefault defaultNumberOfSamples p.requestedSamples) -- number of samples to generate
+    (rMap (toResult p.name) p.wrappedProperty) -- converts each generated IntermediateProperty into a TestResult
+
 {-| Check a list of properties given a random seed.
+    Checks each property with the same initial seed, so 
+    reversing order of properties is OK for reproducing bugs.
 
     check
       [ prop_reverseReverseList
@@ -223,8 +274,9 @@ property6 name predicate generatorA generatorB generatorC generatorD generatorE 
       (initialSeed 1)
 -}
 check : List Property -> Seed -> TestOutput
-check properties seed = map (\f -> f seed) properties
-
+check properties seed = 
+    let eval p = fst <| generate (propertyResults p) seed
+    in map eval properties
 
 {-| Version of check with a default initialSeed of 1
 -}
@@ -267,7 +319,7 @@ deepContinuousCheckEvery time properties =
   Signal.foldp (++) []
     (Signal.map ((check properties) << initialSeed << round) (every time))
 
-printWith : (List String -> String) -> TestResult -> String
+printWith : (List String -> String) -> List TestResult -> String
 printWith flattener results =
   let errorResults =
         filter
@@ -296,10 +348,10 @@ printWith flattener results =
                   name ++ " has failed with the following input: " ++ value)
           errorResults))
 
-printOne : TestResult -> String
+printOne : List TestResult -> String
 printOne = printWith head
 
-printMany : TestResult -> String
+printMany : List TestResult -> String
 printMany = printWith (join "\n")
 
 {-| Print a test output as a string.
