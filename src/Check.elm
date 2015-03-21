@@ -259,7 +259,7 @@ toResult : String -> IntermediateProperty Bool -> TestResult
 toResult name ip =
   let rec =
         { name = name
-        , value = ip.revArguments |> reverse |> toString
+        , value = ip.revArguments |> reverse |> join ", "
         , seed = ip.seed
         }
   in if ip.unappliedRest then Ok rec else Err rec
