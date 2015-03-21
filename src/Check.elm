@@ -16,8 +16,6 @@ module Check
   , simpleCheck
   , continuousCheck
   , continuousCheckEvery
-  , deepContinuousCheck
-  , deepContinuousCheckEvery
   , print
   , printVerbose
   , display
@@ -43,6 +41,8 @@ module Check
 
 import Random (Generator, list, generate, initialSeed, Seed, customGenerator, int)
 import List (map, map2, filter, length, head, (::), reverse, foldl)
+import Dict
+import Debug
 import Result (Result(..))
 import Maybe (Maybe(..), withDefault)
 import Time (every, second, Time)
@@ -72,42 +72,22 @@ type alias PropertyBuilder a = { name : String, wrappedGenerator : Generator (In
 
 type alias Property = PropertyBuilder Bool
 
-type alias TestOutput = List (List TestResult)
-
-mergeTestResult : Result Error Success -> Result Error Success -> Result Error Success
-mergeTestResult result1 result2 =
-  case result1 of
-    Err err1 -> Err err1
-    Ok ok1 ->
-      case result2 of
-        Err err2 -> Err err2
-        Ok ok2 -> Ok ok1
-
-mergeTestResults : List TestResult -> List TestResult -> List TestResult
-mergeTestResults results1 results2 =
-  let errorResults =
-        filter
-          (\result ->
-            case result of
-              Ok _ -> False
-              Err _ -> True)
-          results1
-  in
-    case length errorResults of
-      0 ->
-        map2 mergeTestResult results1 results2
-      n ->
-        errorResults
+type alias TestOutput = Dict.Dict String (List TestResult)
 
 mergeTestOutputs : TestOutput -> TestOutput -> TestOutput
 mergeTestOutputs output1 output2 =
-  case output1 of
-    [] -> output2
-    x :: xs ->
-      case output2 of
-        [] -> output1
-        y :: ys ->
-          mergeTestResults x y :: mergeTestOutputs xs ys
+  let u = Dict.union output1 output2     -- We only need to correct intersections
+      i = Dict.intersect output2 output1 -- Note that we give preference to output2
+                                         -- Now we need to append every bucket in i 
+                                         -- to its bucket in u.
+      unsafeGet key dict =
+        case Dict.get key dict of
+          Just v -> v
+          Nothing -> Debug.crash "unsafeGet with a not-found key" -- Cannot happen actually
+      mergeResults key output =
+        let results = unsafeGet key u ++ unsafeGet key i
+        in Dict.insert key results output 
+  in foldl mergeResults u (Dict.keys i)
 
 
 {-| Create a property given a number of test cases, a name, a condition to test and a generator
@@ -303,8 +283,8 @@ reversing order of properties is OK for reproducing bugs.
 -}
 check : List Property -> Seed -> TestOutput
 check properties seed = 
-    let eval p = fst <| generate (propertyResults p) seed
-    in map eval properties
+    let eval p = (p.name, fst <| generate (propertyResults p) seed)
+    in properties |> map eval |> Dict.fromList
 
 {-| Version of check with a default initialSeed of 1
 -}
@@ -327,28 +307,12 @@ and uses the current time as its seed and merges test outputs.
 -}
 continuousCheckEvery : Time -> List Property -> Signal TestOutput
 continuousCheckEvery time properties =
-  Signal.foldp mergeTestOutputs []
+  Signal.foldp mergeTestOutputs Dict.empty
     (Signal.map ((check properties) << initialSeed << round) (every time))
 
 
-{-| Version of check which continuously runs every second
-and uses the current time as its seed and accumulates all test outputs.
--}
-deepContinuousCheck : List Property -> Signal TestOutput
-deepContinuousCheck =
-  deepContinuousCheckEvery second
-
-
-{-| Version of check which continuously runs every given time interval
-and uses the current time as its seed and accumulates all test outputs.
--}
-deepContinuousCheckEvery : Time -> List Property -> Signal TestOutput
-deepContinuousCheckEvery time properties =
-  Signal.foldp (++) []
-    (Signal.map ((check properties) << initialSeed << round) (every time))
-
-printWith : (List String -> String) -> List TestResult -> String
-printWith flattener results =
+printResultWith : (List String -> String) -> (String, List TestResult) -> String
+printResultWith flattener (name, results) =
   let errorResults =
         filter
           (\result ->
@@ -358,41 +322,35 @@ printWith flattener results =
           results
   in
     if (length errorResults == 0)
-    then
-      case length results of
-        0 -> ""
-        n ->
-          case head results of
-            Ok {name} -> name ++ " has passed " ++ toString n ++ " tests!"
-            Err _ -> ""
+    then name ++ " has passed " ++ toString (length results) ++ " tests!"
     else
       (flattener
         (map
           (\result ->
               case result of
-                Ok {name, value, seed} ->
+                Ok {value, seed} ->
                   name ++ " has passed with the following input: " ++ value
-                Err {name, value, seed} ->
+                Err {value, seed} ->
                   name ++ " has failed with the following input: " ++ value)
           errorResults))
 
-printOne : List TestResult -> String
-printOne = printWith head
+printSingleResult : (String, List TestResult) -> String
+printSingleResult = printResultWith head
 
-printMany : List TestResult -> String
-printMany = printWith (join "\n")
+printManyResults : (String, List TestResult) -> String
+printManyResults = printResultWith (join "\n")
 
 {-| Print a test output as a string.
 -}
 print : TestOutput -> String
-print results =
-  join "\n" (map printOne results)
+print output =
+  output |> Dict.toList |> map printSingleResult |> join "\n"
 
 {-| Print a test output as a detailed string.
 -}
 printVerbose : TestOutput -> String
-printVerbose results =
-  join "\n" (map printMany results)
+printVerbose output =
+  output |> Dict.toList |> map printManyResults |> join "\n"
 
 {-| Display a test output as an Element.
 Useful for viewing in the browser.
