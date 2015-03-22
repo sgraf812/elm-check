@@ -12,6 +12,9 @@ module Check
   , property3N
   , property4N
   , property5N
+  , describedBy
+  , on
+  , sample
   , check
   , simpleCheck
   , continuousCheck
@@ -52,8 +55,7 @@ import Graphics.Element (Element)
 import Text (leftAligned, monospace, fromString)
 
 type alias TestResult =
-  { name : String
-  , failed : Bool
+  { failed : Bool
   , value : String
   , seed : Seed
   }
@@ -247,12 +249,11 @@ defaultNumberOfSamples = 100
 
 {-| The `PartiallyAppliedPredicate` is now fully applied, so we expect `unappliedRest` to evaluate to
 a boolean, indicating whether this particular test succeeded.
-We take name, value and seed directly from the `PartiallyAppliedPredicate`.
+We take value and seed directly from the `PartiallyAppliedPredicate`.
 -}
-toResult : String -> PartiallyAppliedPredicate Bool -> TestResult
-toResult name ip = 
-  { name = name
-  , failed = not (ip.unappliedRest)
+toResult : PartiallyAppliedPredicate Bool -> TestResult
+toResult ip = 
+  { failed = not (ip.unappliedRest)
   , value = ip.revArguments |> reverse |> join ", "
   , seed = ip.seed
   }
@@ -261,7 +262,7 @@ propertyResults : Property -> Generator (List TestResult)
 propertyResults p = 
   list -- generate p.requestedSamples from the property, with the result turned into a TestResult
     (withDefault defaultNumberOfSamples p.requestedSamples) -- number of samples to generate
-    (rMap (toResult p.name) p.wrappedGenerator) -- converts each generated PartiallyAppliedPredicate into a TestResult
+    (rMap toResult p.wrappedGenerator) -- converts each generated PartiallyAppliedPredicate into a TestResult
 
 
 
@@ -368,14 +369,14 @@ printResultWith flattener (name, results) =
   let failures = filter .failed results
   in
     if length failures == 0
-    then name ++ " has passed " ++ toString (length results) ++ " tests!"
+    then toString name ++ " has passed " ++ toString (length results) ++ " tests!"
     else
       (flattener
         (map
           (\r ->
               if r.failed 
-              then r.name ++ " has failed with the following input: " ++ r.value
-              else r.name ++ " has passed with the following input: " ++ r.value)
+              then toString name ++ " has failed with the following input: " ++ r.value
+              else toString name ++ " has passed with the following input: " ++ r.value)
           failures))
 
 printSingleResult : (String, List TestResult) -> String
