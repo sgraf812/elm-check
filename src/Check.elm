@@ -58,13 +58,25 @@ type alias TestResult =
   , seed : Seed
   }
 
-type alias PartiallyAppliedPredicate a = { unappliedRest : a, revArguments : List String, seed : Seed }
+type alias PartiallyAppliedPredicate a = 
+  { unappliedRest : a
+  , revArguments : List String
+  , seed : Seed 
+  }
 
-type alias PropertyBuilder a = { name : String, wrappedGenerator : Generator (PartiallyAppliedPredicate a), requestedSamples : Maybe Int }
+type alias PropertyBuilder a = 
+  { name : String
+  , wrappedGenerator : Generator (PartiallyAppliedPredicate a)
+  , requestedSamples : Maybe Int 
+  }
 
 type alias Property = PropertyBuilder Bool
 
 type alias TestOutput = Dict.Dict String (List TestResult)
+
+-----------------------------
+--  property* 'overloads'  --
+-----------------------------
 
 
 {-| Create a property given a number of test cases, a name, a condition to test and a generator
@@ -156,19 +168,16 @@ property6 name predicate generatorA generatorB generatorC generatorD generatorE 
   name `describedBy` predicate `on` generatorA `on` generatorB `on` generatorC `on` generatorD `on` generatorE `on` generatorF
 
 
+
+------------------------------------
+--  Infix operators for building  --
+--  properties, implementation    --
+------------------------------------
+
+
 infixl 1 `describedBy`
 infixl 0 `on`
 infixl 0 `sample`
-
--- Some code from the examples that has to type check
-axiom : Property
-axiom = "5 equals 5" `describedBy` 5 == 5 
-
-prop_identity : Property
-prop_identity = "Identity" `describedBy` (\x -> x == identity x) `on` int 0 1000
-
-prop_identity_n : Property
-prop_identity_n = "Identity" `describedBy` (\x -> x == identity x) `on` int 0 1000 `sample` 200
 
 {-| Constructs an initial PartiallyAppliedPredicate, binding some predicate as the 
 unappliedRest and the seed with which generation of the TestResult began.
@@ -200,7 +209,10 @@ and saves the argument.
 -}
 applyToProperty : PartiallyAppliedPredicate (a -> b) -> a -> PartiallyAppliedPredicate b
 applyToProperty p a =
-  { p | unappliedRest <- p.unappliedRest a, revArguments <- toString a :: p.revArguments }
+  { p 
+  | unappliedRest <- p.unappliedRest a
+  , revArguments <- toString a :: p.revArguments 
+  }
 
 {-| Supplies generators for arguments of the property to build up. 
 Using an infix operator like this, we can support functions with an
@@ -216,7 +228,8 @@ on builder generatorA =
       let (ip, seed') = generate builder.wrappedGenerator seed
           (a, seed'') = generate generatorA seed'
           ip' = applyToProperty ip a
-      in (ip', seed''))
+      in 
+        (ip', seed''))
   }
 
 {-| Dictate how many samples to generate for the property.
@@ -251,6 +264,13 @@ propertyResults p =
     (rMap (toResult p.name) p.wrappedGenerator) -- converts each generated PartiallyAppliedPredicate into a TestResult
 
 
+
+-----------------------------------------
+--  Actual checks, running properties  --
+--  and merging results                --
+-----------------------------------------
+
+
 mergeTestOutputsWith : (List TestResult -> List TestResult -> List TestResult) -> TestOutput -> TestOutput -> TestOutput
 mergeTestOutputsWith resultMerger output1 output2 =
   let u = Dict.union output1 output2     -- We only need to correct intersections
@@ -263,16 +283,19 @@ mergeTestOutputsWith resultMerger output1 output2 =
           Nothing -> Debug.crash "unsafeGet with a not-found key" -- Cannot happen actually
       mergeBuckets key output =
         let results = resultMerger (unsafeGet key u) (unsafeGet key i)
-        in Dict.insert key results output 
-  in foldl mergeBuckets u (Dict.keys i)
+        in 
+          Dict.insert key results output 
+  in 
+    foldl mergeBuckets u (Dict.keys i)
 
 
 mergePreferringFailures : List TestResult -> List TestResult -> List TestResult
 mergePreferringFailures ys xs = -- ys are the fresh results, xs the accumulated
   let failures = filter .failed ys ++ filter .failed xs
-  in if length failures == 0
-     then ys
-     else failures
+  in 
+    if length failures == 0
+    then ys
+    else failures
 
 
 {-| Check a list of properties given a random seed.
@@ -288,8 +311,9 @@ reversing order of properties is OK for reproducing bugs.
 -}
 check : List Property -> Seed -> TestOutput
 check properties seed = 
-    let eval p = (p.name, fst <| generate (propertyResults p) seed)
-    in properties |> map eval |> Dict.fromList
+    let eval p = (p.name, generate (propertyResults p) seed |> fst)
+    in 
+      properties |> map eval |> Dict.fromList
 
 {-| Version of check with a default initialSeed of 1
 -}
@@ -331,6 +355,12 @@ deepContinuousCheckEvery : Time -> List Property -> Signal TestOutput
 deepContinuousCheckEvery time properties =
   Signal.foldp (mergeTestOutputsWith (++)) Dict.empty
     (Signal.map ((check properties) << initialSeed << round) (every time))
+
+
+
+-------------------------
+--  Output formatting  --
+-------------------------
 
 
 printResultWith : (List String -> String) -> (String, List TestResult) -> String
@@ -383,6 +413,7 @@ displayVerbose output =
   let outputString = printVerbose output
   in
     leftAligned (monospace (fromString outputString))
+
 
 
 ------ From elm-random-extra -------
