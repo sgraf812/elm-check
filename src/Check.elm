@@ -51,20 +51,12 @@ import String (join)
 import Graphics.Element (Element)
 import Text (leftAligned, monospace, fromString)
 
-
-type alias Error =
+type alias TestResult =
   { name : String
+  , failed : Bool
   , value : String
   , seed : Seed
   }
-
-type alias Success =
-  { name : String
-  , value : String
-  , seed : Seed
-  }
-
-type alias TestResult = Result Error Success
 
 type alias PartiallyAppliedPredicate a = { unappliedRest : a, revArguments : List String, seed : Seed }
 
@@ -240,27 +232,23 @@ sample builder n =
 defaultNumberOfSamples : Int
 defaultNumberOfSamples = 100
 
+{-| The `PartiallyAppliedPredicate` is now fully applied, so we expect `unappliedRest` to evaluate to
+a boolean, indicating whether this particular test succeeded.
+We take name, value and seed directly from the `PartiallyAppliedPredicate`.
+-}
 toResult : String -> PartiallyAppliedPredicate Bool -> TestResult
-toResult name ip =
-  let rec =
-        { name = name
-        , value = ip.revArguments |> reverse |> join ", "
-        , seed = ip.seed
-        }
-  in if ip.unappliedRest then Ok rec else Err rec
+toResult name ip = 
+  { name = name
+  , failed = not (ip.unappliedRest)
+  , value = ip.revArguments |> reverse |> join ", "
+  , seed = ip.seed
+  }
 
 propertyResults : Property -> Generator (List TestResult)
 propertyResults p = 
   list -- generate p.requestedSamples from the property, with the result turned into a TestResult
     (withDefault defaultNumberOfSamples p.requestedSamples) -- number of samples to generate
     (rMap (toResult p.name) p.wrappedGenerator) -- converts each generated PartiallyAppliedPredicate into a TestResult
-
-
-isFailure : Result Success Error -> Bool
-isFailure r = 
-  case r of
-    Ok _ -> False
-    Err _ -> True
 
 
 mergeTestOutputsWith : (List TestResult -> List TestResult -> List TestResult) -> TestOutput -> TestOutput -> TestOutput
@@ -281,7 +269,7 @@ mergeTestOutputsWith resultMerger output1 output2 =
 
 mergePreferringFailures : List TestResult -> List TestResult -> List TestResult
 mergePreferringFailures ys xs = -- ys are the fresh results, xs the accumulated
-  let failures = filter isFailure ys ++ filter isFailure xs
+  let failures = filter .failed ys ++ filter .failed xs
   in if length failures == 0
      then ys
      else failures
@@ -347,19 +335,17 @@ deepContinuousCheckEvery time properties =
 
 printResultWith : (List String -> String) -> (String, List TestResult) -> String
 printResultWith flattener (name, results) =
-  let failures = filter isFailure results
+  let failures = filter .failed results
   in
     if length failures == 0
     then name ++ " has passed " ++ toString (length results) ++ " tests!"
     else
       (flattener
         (map
-          (\result ->
-              case result of
-                Ok {value, seed} ->
-                  name ++ " has passed with the following input: " ++ value
-                Err {value, seed} ->
-                  name ++ " has failed with the following input: " ++ value)
+          (\r ->
+              if r.failed 
+              then r.name ++ " has failed with the following input: " ++ r.value
+              else r.name ++ " has passed with the following input: " ++ r.value)
           failures))
 
 printSingleResult : (String, List TestResult) -> String
