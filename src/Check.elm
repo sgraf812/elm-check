@@ -74,21 +74,6 @@ type alias Property = PropertyBuilder Bool
 
 type alias TestOutput = Dict.Dict String (List TestResult)
 
-mergeTestOutputs : TestOutput -> TestOutput -> TestOutput
-mergeTestOutputs output1 output2 =
-  let u = Dict.union output1 output2     -- We only need to correct intersections
-      i = Dict.intersect output2 output1 -- Note that we give preference to output2
-                                         -- Now we need to append every bucket in i 
-                                         -- to its bucket in u.
-      unsafeGet key dict =
-        case Dict.get key dict of
-          Just v -> v
-          Nothing -> Debug.crash "unsafeGet with a not-found key" -- Cannot happen actually
-      mergeResults key output =
-        let results = unsafeGet key u ++ unsafeGet key i
-        in Dict.insert key results output 
-  in foldl mergeResults u (Dict.keys i)
-
 
 {-| Create a property given a number of test cases, a name, a condition to test and a generator
 Example :
@@ -103,30 +88,29 @@ propertyN : Int -> String -> (a -> Bool) -> Generator a -> Property
 propertyN numberOfTests name predicate generator = 
   name `describedBy` predicate `on` generator `sample` numberOfTests
 
-
 {-| Analog of `propertyN` for functions of two arguments
 -}
 property2N : Int -> String -> (a -> b -> Bool) -> Generator a -> Generator b -> Property
 property2N numberOfTests name predicate generatorA generatorB =
-  propertyN numberOfTests name (\(a,b) -> predicate a b) (rZip generatorA generatorB)
+  name `describedBy` predicate `on` generatorA `on` generatorB `sample` numberOfTests
 
 {-| Analog of `propertyN` for functions of three arguments
 -}
 property3N : Int -> String -> (a -> b -> c -> Bool) -> Generator a -> Generator b -> Generator c -> Property
 property3N numberOfTests name predicate generatorA generatorB generatorC =
-  propertyN numberOfTests name (\(a,b,c) -> predicate a b c) (rZip3 generatorA generatorB generatorC)
+  name `describedBy` predicate `on` generatorA `on` generatorB `on` generatorC `sample` numberOfTests
 
 {-| Analog of `propertyN` for functions of four arguments
 -}
 property4N : Int -> String -> (a -> b -> c -> d -> Bool) -> Generator a -> Generator b -> Generator c -> Generator d -> Property
 property4N numberOfTests name predicate generatorA generatorB generatorC generatorD =
-  propertyN numberOfTests name (\(a,b,c,d) -> predicate a b c d) (rZip4 generatorA generatorB generatorC generatorD)
+  name `describedBy` predicate `on` generatorA `on` generatorB `on` generatorC `on` generatorD `sample` numberOfTests
 
 {-| Analog of `propertyN` for functions of five arguments
 -}
 property5N : Int -> String -> (a -> b -> c -> d -> e -> Bool) -> Generator a -> Generator b -> Generator c -> Generator d -> Generator e -> Property
 property5N numberOfTests name predicate generatorA generatorB generatorC generatorD generatorE =
-  propertyN numberOfTests name (\(a,b,c,d,e) -> predicate a b c d e) (rZip5 generatorA generatorB generatorC generatorD generatorE)
+  name `describedBy` predicate `on` generatorA `on` generatorB `on` generatorC `on` generatorD `on` generatorE `sample` numberOfTests
 
 
 
@@ -141,7 +125,8 @@ Note : This property will create 100 test cases. If you want a different
 number, use `propertyN`
 -}
 property : String -> (a -> Bool) -> Generator a -> Property
-property = propertyN 100
+property name predicate generator = 
+  name `describedBy` predicate `on` generator
 
 {-| Analog of `property` for functions of two arguments
 Example :
@@ -152,31 +137,31 @@ Example :
 -}
 property2 : String -> (a -> b -> Bool) -> Generator a -> Generator b -> Property
 property2 name predicate generatorA generatorB =
-  property name (\(a,b) -> predicate a b) (rZip generatorA generatorB)
+  name `describedBy` predicate `on` generatorA `on` generatorB
 
 {-| Analog of `property` for functions of three arguments
 -}
 property3 : String -> (a -> b -> c -> Bool) -> Generator a -> Generator b -> Generator c -> Property
 property3 name predicate generatorA generatorB generatorC =
-  property name (\(a,b,c) -> predicate a b c) (rZip3 generatorA generatorB generatorC)
+  name `describedBy` predicate `on` generatorA `on` generatorB `on` generatorC
 
 {-| Analog of `property` for functions of four arguments
 -}
 property4 : String -> (a -> b -> c -> d -> Bool) -> Generator a -> Generator b -> Generator c -> Generator d -> Property
 property4 name predicate generatorA generatorB generatorC generatorD =
-  property name (\(a,b,c,d) -> predicate a b c d) (rZip4 generatorA generatorB generatorC generatorD)
+  name `describedBy` predicate `on` generatorA `on` generatorB `on` generatorC `on` generatorD
 
 {-| Analog of `property` for functions of five arguments
 -}
 property5 : String -> (a -> b -> c -> d -> e -> Bool) -> Generator a -> Generator b -> Generator c -> Generator d -> Generator e -> Property
 property5 name predicate generatorA generatorB generatorC generatorD generatorE =
-  property name (\(a,b,c,d,e) -> predicate a b c d e) (rZip5 generatorA generatorB generatorC generatorD generatorE)
+  name `describedBy` predicate `on` generatorA `on` generatorB `on` generatorC `on` generatorD `on` generatorE
 
 {-| Analog of `property` for functions of six arguments
 -}
 property6 : String -> (a -> b -> c -> d -> e -> f -> Bool) -> Generator a -> Generator b -> Generator c -> Generator d -> Generator e -> Generator f -> Property
 property6 name predicate generatorA generatorB generatorC generatorD generatorE generatorF =
-  property name (\(a,b,c,d,e,f) -> predicate a b c d e f) (rZip6 generatorA generatorB generatorC generatorD generatorE generatorF)
+  name `describedBy` predicate `on` generatorA `on` generatorB `on` generatorC `on` generatorD `on` generatorE `on` generatorF
 
 
 infixl 1 `describedBy`
@@ -270,6 +255,38 @@ propertyResults p =
     (withDefault defaultNumberOfSamples p.requestedSamples) -- number of samples to generate
     (rMap (toResult p.name) p.wrappedGenerator) -- converts each generated IntermediateProperty into a TestResult
 
+
+isFailure : Result Success Error -> Bool
+isFailure r = 
+  case r of
+    Ok _ -> False
+    Err _ -> True
+
+
+mergeTestOutputsWith : (List TestResult -> List TestResult -> List TestResult) -> TestOutput -> TestOutput -> TestOutput
+mergeTestOutputsWith resultMerger output1 output2 =
+  let u = Dict.union output1 output2     -- We only need to correct intersections
+      i = Dict.intersect output2 output1 -- Note that we give preference to output2
+                                         -- Now we need to append every bucket in i 
+                                         -- to its bucket in u.
+      unsafeGet key dict =
+        case Dict.get key dict of
+          Just v -> v
+          Nothing -> Debug.crash "unsafeGet with a not-found key" -- Cannot happen actually
+      mergeBuckets key output =
+        let results = resultMerger (unsafeGet key u) (unsafeGet key i)
+        in Dict.insert key results output 
+  in foldl mergeBuckets u (Dict.keys i)
+
+
+mergePreferringFailures : List TestResult -> List TestResult -> List TestResult
+mergePreferringFailures ys xs = -- ys are the fresh results, xs the accumulated
+  let failures = filter isFailure ys ++ filter isFailure xs
+  in if length failures == 0
+     then ys
+     else failures
+
+
 {-| Check a list of properties given a random seed.
 Checks each property with the same initial seed, so 
 reversing order of properties is OK for reproducing bugs.
@@ -307,21 +324,32 @@ and uses the current time as its seed and merges test outputs.
 -}
 continuousCheckEvery : Time -> List Property -> Signal TestOutput
 continuousCheckEvery time properties =
-  Signal.foldp mergeTestOutputs Dict.empty
+  Signal.foldp (mergeTestOutputsWith mergePreferringFailures) Dict.empty
+    (Signal.map ((check properties) << initialSeed << round) (every time))
+
+
+{-| Version of check which continuously runs every second
+and uses the current time as its seed and accumulates all test outputs.
+-}
+deepContinuousCheck : List Property -> Signal TestOutput
+deepContinuousCheck =
+  deepContinuousCheckEvery second
+
+
+{-| Version of check which continuously runs every given time interval
+and uses the current time as its seed and accumulates all test outputs.
+-}
+deepContinuousCheckEvery : Time -> List Property -> Signal TestOutput
+deepContinuousCheckEvery time properties =
+  Signal.foldp (mergeTestOutputsWith (++)) Dict.empty
     (Signal.map ((check properties) << initialSeed << round) (every time))
 
 
 printResultWith : (List String -> String) -> (String, List TestResult) -> String
 printResultWith flattener (name, results) =
-  let errorResults =
-        filter
-          (\result ->
-            case result of
-              Ok _ -> False
-              Err _ -> True)
-          results
+  let failures = filter isFailure results
   in
-    if (length errorResults == 0)
+    if length failures == 0
     then name ++ " has passed " ++ toString (length results) ++ " tests!"
     else
       (flattener
@@ -332,7 +360,7 @@ printResultWith flattener (name, results) =
                   name ++ " has passed with the following input: " ++ value
                 Err {value, seed} ->
                   name ++ " has failed with the following input: " ++ value)
-          errorResults))
+          failures))
 
 printSingleResult : (String, List TestResult) -> String
 printSingleResult = printResultWith head
@@ -376,22 +404,6 @@ displayVerbose output =
 --- In order to not depend explicity on elm-random-extra
 --- Hopefully, these functions will be merged with the core random module
 
-rZip : Generator a -> Generator b -> Generator (a, b)
-rZip = rMap2 (,)
-
-rZip3 : Generator a -> Generator b -> Generator c -> Generator (a, b, c)
-rZip3 = rMap3 (,,)
-
-rZip4 : Generator a -> Generator b -> Generator c -> Generator d -> Generator (a, b, c, d)
-rZip4 = rMap4 (,,,)
-
-rZip5 : Generator a -> Generator b -> Generator c -> Generator d -> Generator e -> Generator (a, b, c, d, e)
-rZip5 = rMap5 (,,,,)
-
-rZip6 : Generator a -> Generator b -> Generator c -> Generator d -> Generator e -> Generator f -> Generator (a, b, c, d, e, f)
-rZip6 = rMap6 (,,,,,)
-
-
 rMap : (a -> b) -> Generator a -> Generator b
 rMap f generator =
   customGenerator
@@ -399,60 +411,3 @@ rMap f generator =
         let (value, nextSeed) = generate generator seed
         in
           (f value, nextSeed))
-
-rMap2 : (a -> b -> c) -> Generator a -> Generator b -> Generator c
-rMap2 f generatorA generatorB =
-  customGenerator
-    (\seed ->
-        let (valueA, seed1) = generate generatorA seed
-            (valueB, seed2) = generate generatorB seed1
-        in
-          (f valueA valueB, seed2))
-
-rMap3 : (a -> b -> c -> d) -> Generator a -> Generator b -> Generator c -> Generator d
-rMap3 f generatorA generatorB generatorC =
-  customGenerator
-    (\seed ->
-        let (valueA, seed1) = generate generatorA seed
-            (valueB, seed2) = generate generatorB seed1
-            (valueC, seed3) = generate generatorC seed2
-        in
-          (f valueA valueB valueC, seed3))
-
-rMap4 : (a -> b -> c -> d -> e) -> Generator a -> Generator b -> Generator c -> Generator d -> Generator e
-rMap4 f generatorA generatorB generatorC generatorD =
-  customGenerator
-    (\seed ->
-        let (valueA, seed1) = generate generatorA seed
-            (valueB, seed2) = generate generatorB seed1
-            (valueC, seed3) = generate generatorC seed2
-            (valueD, seed4) = generate generatorD seed3
-        in
-          (f valueA valueB valueC valueD, seed4))
-
-rMap5 : (a -> b -> c -> d -> e -> f) -> Generator a -> Generator b -> Generator c -> Generator d -> Generator e -> Generator f
-rMap5 f generatorA generatorB generatorC generatorD generatorE =
-  customGenerator
-    (\seed ->
-        let (valueA, seed1) = generate generatorA seed
-            (valueB, seed2) = generate generatorB seed1
-            (valueC, seed3) = generate generatorC seed2
-            (valueD, seed4) = generate generatorD seed3
-            (valueE, seed5) = generate generatorE seed4
-        in
-          (f valueA valueB valueC valueD valueE, seed5))
-
-rMap6 : (a -> b -> c -> d -> e -> f -> g) -> Generator a -> Generator b -> Generator c -> Generator d -> Generator e -> Generator f -> Generator g
-rMap6 f generatorA generatorB generatorC generatorD generatorE generatorF =
-  customGenerator
-    (\seed ->
-        let (valueA, seed1) = generate generatorA seed
-            (valueB, seed2) = generate generatorB seed1
-            (valueC, seed3) = generate generatorC seed2
-            (valueD, seed4) = generate generatorD seed3
-            (valueE, seed5) = generate generatorE seed4
-            (valueF, seed6) = generate generatorF seed5
-        in
-          (f valueA valueB valueC valueD valueE valueF, seed6))
-
------------------------------------
