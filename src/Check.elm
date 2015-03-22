@@ -66,9 +66,9 @@ type alias Success =
 
 type alias TestResult = Result Error Success
 
-type alias IntermediateProperty a = { unappliedRest : a, revArguments : List String, seed : Seed }
+type alias PartiallyAppliedPredicate a = { unappliedRest : a, revArguments : List String, seed : Seed }
 
-type alias PropertyBuilder a = { name : String, wrappedGenerator : Generator (IntermediateProperty a), requestedSamples : Maybe Int }
+type alias PropertyBuilder a = { name : String, wrappedGenerator : Generator (PartiallyAppliedPredicate a), requestedSamples : Maybe Int }
 
 type alias Property = PropertyBuilder Bool
 
@@ -178,11 +178,11 @@ prop_identity = "Identity" `describedBy` (\x -> x == identity x) `on` int 0 1000
 prop_identity_n : Property
 prop_identity_n = "Identity" `describedBy` (\x -> x == identity x) `on` int 0 1000 `sample` 200
 
-{-| Constructs an initial IntermediateProperty, binding some predicate as the 
+{-| Constructs an initial PartiallyAppliedPredicate, binding some predicate as the 
 unappliedRest and the seed with which generation of the TestResult began.
 -}
-intermediateProperty : a -> Seed -> IntermediateProperty a
-intermediateProperty predicate seed =
+partiallyAppliedPredicate : a -> Seed -> PartiallyAppliedPredicate a
+partiallyAppliedPredicate predicate seed =
   { unappliedRest = predicate
   , revArguments = []
   , seed = seed
@@ -199,14 +199,14 @@ describedBy name predicate =
   , wrappedGenerator = 
       customGenerator
         (\seed ->
-          (intermediateProperty predicate seed, seed))
+          (partiallyAppliedPredicate predicate seed, seed))
   , requestedSamples = Nothing
   }
 
-{-| Further applies the wrapped property generator of an IntermediateProperty
+{-| Further applies the wrapped property generator of an PartiallyAppliedPredicate
 and saves the argument.
 -}
-applyToProperty : IntermediateProperty (a -> b) -> a -> IntermediateProperty b
+applyToProperty : PartiallyAppliedPredicate (a -> b) -> a -> PartiallyAppliedPredicate b
 applyToProperty p a =
   { p | unappliedRest <- p.unappliedRest a, revArguments <- toString a :: p.revArguments }
 
@@ -240,7 +240,7 @@ sample builder n =
 defaultNumberOfSamples : Int
 defaultNumberOfSamples = 100
 
-toResult : String -> IntermediateProperty Bool -> TestResult
+toResult : String -> PartiallyAppliedPredicate Bool -> TestResult
 toResult name ip =
   let rec =
         { name = name
@@ -253,7 +253,7 @@ propertyResults : Property -> Generator (List TestResult)
 propertyResults p = 
   list -- generate p.requestedSamples from the property, with the result turned into a TestResult
     (withDefault defaultNumberOfSamples p.requestedSamples) -- number of samples to generate
-    (rMap (toResult p.name) p.wrappedGenerator) -- converts each generated IntermediateProperty into a TestResult
+    (rMap (toResult p.name) p.wrappedGenerator) -- converts each generated PartiallyAppliedPredicate into a TestResult
 
 
 isFailure : Result Success Error -> Bool
